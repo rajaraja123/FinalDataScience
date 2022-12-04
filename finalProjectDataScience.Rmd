@@ -1,0 +1,355 @@
+---
+title: "Final Project"
+author: "mack"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+library(dplyr)
+library(tidymodels)
+library(vroom)
+library(here)
+library(corpus)
+library(openssl)
+library(httpuv)
+library(rtweet)
+library(httr)
+library(RTextTools)
+library(SnowballC)
+library(textdata)
+library(purrr)
+library(tm)
+library(NLP)
+library(plyr)
+library(plotly)
+library(DT)
+library(sass)
+library(stringr)
+library(sentimentr)
+library(naivebayes)
+library(ggplot2)
+library(plotrix)
+library(shiny)
+library(caTools)
+library(SentimentAnalysis)
+library(RColorBrewer)
+library(wordcloud)
+library(tidyverse) 
+library(tidytext)
+library(e1071)
+library(caret)
+library(syuzhet)
+library(gmodels)
+
+```
+
+```{r akses API yang bertujuan untuk crawling data pake twitter} 
+api_key <- "FBox1hjtTDLO3VZvyKWIZx77j"
+api_secret_key <- "b3oOc7sGKHrzCdlHjFP8L6U5zWOdhSiEv3g3TJAfwQ02EV6IW5"
+bearer_token <- "AAAAAAAAAAAAAAAAAAAAAF4YjgEAAAAADwzHHipo40WWiP%2F7NYjSaRvL5Gk%3DmLyBXX31ggRKxdEYkNmIid8uEKkzKiQ951aO1lJgE1qvzBC3JS"
+accessToken <- "1592089064374534145-6hpvtXEwCUBMK7wbZCIXaRXTlarEWc"
+accessSecret <- "h35r7DP0dR4AcUwBQqUXE5diaPTDkY7TEm4s41cT9X3xp"
+token = create_token(
+  app = "sentimentAnalysisPresidentCandidate",
+  consumer_key = api_key,
+  consumer_secret = api_secret_key,
+  access_token = accessToken,
+  access_secret = accessSecret,
+  set_renv = TRUE
+)
+
+auth_save(token, "tweetAccess")
+auth_as("tweetAccess")
+auth_sitrep()
+
+```
+
+```{r Mencari data yang diinginkan}
+dataCrawling_Ganjar <- search_tweets('#ganjar', n=400, include_rts=FALSE)
+dataCrawling_Prabowo <- search_tweets('#prabowo', n=400, include_rts=FALSE)
+dataCrawling_Anies <- search_tweets('#anies', n=500, include_rts=FALSE)
+dataCrawling_RK <- search_tweets('#ridwankamil', n=500, include_rts=FALSE)
+
+dataCapres <- rbind(dataCrawling_Ganjar, dataCrawling_Prabowo, dataCrawling_Anies, dataCrawling_RK)
+
+dataCapres <- dataCapres %>%
+  select(full_text)
+```
+
+```{r melakukan cleaning pada data}
+dataKedua <-  Corpus(VectorSource(dataCapres$full_text))
+removeLink <- function(d) gsub("http[^[:space:]]*","",d)
+
+dataClean <- tm_map(dataKedua, removeLink)
+removenl <- function(d) gsub("\n"," ",d)
+
+dataClean <- tm_map(dataClean, removenl)
+removeComma <- function(d) gsub(",","",d)
+
+dataClean <- tm_map(dataClean, removeComma)
+removeTitik2 <- function(d) gsub(":","",d)
+
+dataClean <- tm_map(dataClean, removeTitik2)
+removeTitikKoma <- function(d) gsub(";","",d)
+
+dataClean <- tm_map(dataClean, removeTitikKoma)
+removeAmp <- function(d) gsub("&amp","",d)
+
+dataClean <- tm_map(dataClean, removeAmp)
+removeun <- function(d) gsub("@\\w+","",d)
+
+dataClean <- tm_map(dataClean, removeun)
+remove.all <- function(d) gsub("[^[:alpha:][:space:]]","",d)
+
+dataClean <- tm_map(dataClean, remove.all)
+dataClean <- tm_map(dataClean, removePunctuation)
+dataClean <- tm_map(dataClean, tolower)
+df <- data.frame(text=unlist(sapply(dataClean,'[')),stringAsFactors=F)
+
+write.csv(df,file="Data_Bersih.csv")
+```
+
+```{r manggil data}
+Twitter <- vroom("Data_Bersih.csv")
+tweetsc <- data.frame(Twitter['text'])
+
+```
+
+```{r Sentiment}
+TwitterChar <- as.character(Twitter$text)
+sentiment <- get_nrc_sentiment(TwitterChar)
+twitterMerge <- cbind(TwitterChar, sentiment)
+par(mar=rep(3,4))
+barplot(colSums(sentiment), col = rainbow(10), ylab = 'count', main = 'Sentimen Analisis')
+
+```
+
+```{r Polaritas nilai Positif dan Negatif}
+tweet.df <- data.frame(Twitter['text'])
+    
+    # membersihkan karakter yang tak diperlukan
+    tweet.df$text = str_replace_all(tweet.df$text, "[\\.\\,\\;]+", " ")
+    tweet.df$text = str_replace_all(tweet.df$text, "http\\w+", "")
+    tweet.df$text = str_replace_all(tweet.df$text, "@\\w+", " ")
+    tweet.df$text = str_replace_all(tweet.df$text, "[[:punct:]]", " ")
+    tweet.df$text = str_replace_all(tweet.df$text, "[[:digit:]]", " ")
+    tweet.df$text = str_replace_all(tweet.df$text, "^ ", " ")
+    tweet.df$text = str_replace_all(tweet.df$text, "[<].*[>]", " ")
+    
+    # sentimen skor
+    sentiment.score <- sentiment(tweet.df$text)
+    sentiment.score <- sentiment.score %>% 
+      group_by(element_id) %>% 
+      summarise(sentiment = mean(sentiment))
+    
+    tweet.df$polarity <- sentiment.score$sentiment
+    tweet.final <- tweet.df[, c('text', 'polarity')]
+    
+    tweet.final <- tweet.final[tweet.final$polarity != 0, ]
+    tweet.final$sentiment <- ifelse(tweet.final$polarity < 0, "Negative", "Positive")
+    tweet.final$sentiment <- as.factor(tweet.final$sentiment)
+    
+    tweet.balanced <- upSample(x = tweet.final$text, y = tweet.final$sentiment)
+    names(tweet.balanced) <- c('text', 'sentiment')
+    
+    tweet.final$id <- seq(1, nrow(tweet.final))
+```
+
+```{r membagi data}
+#make this example reproducible
+set.seed(12)
+
+# membagi data untuk dijadikan data train dan data test
+sample <- sample.split(tweet.final, SplitRatio = 0.7)
+train.tweet  <- subset(tweet.final, sample == TRUE)
+test.tweet   <- subset(tweet.final, sample == FALSE)
+```
+
+```{r Document Terms Matrix}
+ get.dtm <- function(text.col, id.col, input.df, weighting) {
+      
+      # menghapus emoji
+      input.df$text <- gsub("[^\x01-\x7F]", "", input.df$text)
+      
+      # preprocessing text
+      corpus <- VCorpus(DataframeSource(input.df))
+      corpus <- tm_map(corpus, removePunctuation)
+      corpus <- tm_map(corpus, removeNumbers)
+      corpus <- tm_map(corpus, stripWhitespace)
+      corpus <- tm_map(corpus, removeWords, stopwords("english"))
+      corpus <- tm_map(corpus, content_transformer(tolower))
+      
+      dtm <- DocumentTermMatrix(corpus, control = list(weighting = weighting))
+      return(list(
+        "termMatrix" = dtm,
+        "corpus" = corpus
+      ))
+ }
+    colnames(train.tweet)[4] <- "doc_id"
+    train.dtm <- get.dtm('text', 'id', train.tweet, "weightTfIdf")
+    train.corpus <- train.dtm$corpus
+    train.dtm <- train.dtm$termMatrix
+    train.dtm.mat <- as.matrix(train.dtm)
+    
+    colnames(test.tweet)[4] <- "doc_id"
+    test.dtm <- get.dtm('text', 'id', test.tweet, "weightTfIdf")
+    testcorpus <- test.dtm$corpus
+    test.dtm <- test.dtm$termMatrix
+    test.dtm.mat <- as.matrix(test.dtm)
+    
+```
+
+```{r Naive Bayes}
+ # Using Naive Bayes
+    model <- naive_bayes(x = train.dtm.mat, y = train.tweet$sentiment, usekernel = TRUE)
+    
+    # predict using model
+    preds <- predict(model, newdata = test.dtm.mat, type = "class")
+    
+    
+    
+    head(preds)
+    library(gmodels)
+    CrossTable(preds, test.tweet$sentiment,
+           prop.chisq = FALSE, prop.t = FALSE, prop.r = FALSE,
+           dnn = c('predicted', 'actual'))
+    
+    
+    (conf <- table(preds, test.tweet$sentiment))
+    confusionMatrix(conf) 
+    # calculate accuracy with Confusion Matrix
+    cm <- confusionMatrix(preds, test.tweet$sentiment)
+    accuracy <- cm$overall['Accuracy']
+    accuracy
+
+```
+
+```{r Polaritas Positif and Negatif}
+x <- c(model$prior[['Negative']], model$prior[['Positive']])
+labels <- c("Negative", "Positive")
+labels
+```
+
+```{r UI}
+ui <- fluidPage(
+  
+  titlePanel("Sentimen Analisis Elektabilitas Capres"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("maxword",
+                  "Jumlah kata", min = 15, max = 150, value = 20),
+      submitButton(text="Show")
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel(
+          "Emotion",
+          HTML(
+            "<div><h3>Barplot Emosi</h3></div>"
+          ),
+          plotOutput("emotion")
+        ),
+        
+        tabPanel(
+          "Polaritas Positif dan Negatif",
+          HTML(
+            "<div><h3>Perbandingan Positif dengan Negatif</h3></div>"
+          ),
+          plotOutput("piePlot"),
+        
+          tags$head(tags$style("#positive, #negative {
+                                            font-size: 20px
+                    }"))
+        ),
+        
+        tabPanel(
+          "WordCloud",
+          HTML(
+            "<div><h3>Word Cloud dari Data</h3></div>"
+          ),
+          plotOutput("wordCloud")
+        ),
+        
+        tabPanel(
+          "Akurasi",
+          HTML(
+            "<div><h3>Akurasi</h3></div>"
+          ),
+          textOutput("accuracy"),
+          tags$head(tags$style("#accuracy {
+                                            font-size: 40px
+                    }"))
+        ),
+        tabPanel(
+          "Data Bersih",
+          HTML(
+            "<div><h3>Data yang sudah dibersihkan</h3></div>"
+          ),
+         DT::dataTableOutput("table")
+          
+        ),
+        plotOutput("distPlot")
+      )
+    )
+  )
+)
+```
+
+
+```{r Server}
+server <- function(input, output) {
+
+  
+  output$accuracy <- renderText({
+    paste(toString(floor(accuracy * 100)), "%", sep = "")
+  })
+  
+  output$wordCloud <- renderPlot({
+    wordcloud(
+      train.corpus,
+      random.offer = 'F',
+      max.words = input$maxword,
+      main="wordCount",
+      colors=brewer.pal(8,"Dark2")
+    )
+  })
+  
+  # Render output
+  
+  output$piePlot <- renderPlot({
+    pie(x, labels = labels, explode = 0.1, main = "Perbandingan Positif dan Negatif")
+    #barplot(colSums(labels), xlab = "Sentiment", ylab = "Counts", col = c("Green","Red","Blue"))
+    
+  })
+  
+  output$emotion <- renderPlot({
+   barplot(colSums(sentiment), col = rainbow(10), ylab = 'count', main = 'Sentimen Emotion')
+  })
+  
+  output$negative <- renderText(
+    paste("Negative : ", 
+          toString(floor(model$prior[['Negative']] * 100)), "%", sep = "")
+  )
+  output$table <- DT::renderDataTable({
+    DT::datatable(tweetsc, options = list(lengthChange = FALSE))
+  })
+  
+  output$positive <- renderText(
+    paste("Positive : ", 
+          toString(floor(model$prior[['Positive']] * 100)),  "%", sep = "")
+  )
+  
+  
+}
+```
+
+```{r Run}
+shinyApp(ui = ui, server = server)
+```
